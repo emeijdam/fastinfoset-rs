@@ -1,0 +1,45 @@
+[package]
+name = "fastinfoset-rs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Pure-Rust streaming reader and writer for Fast Infoset (ITU-T X.891 / ISO/IEC 24824-1), the binary encoding of the XML Information Set."
+authors = ["Ed Meijdam emeijdam@dasc.nl"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/USER/fastinfoset-rs"
+homepage = "https://github.com/USER/fastinfoset-rs"
+documentation = "https://docs.rs/fastinfoset-rs"
+readme = "README.md"
+keywords = ["fast-infoset", "xml", "binary-xml", "x891", "infoset"]
+categories = ["encoding", "parser-implementations"]
+exclude = [
+    "samples/*",
+    ".DS_Store",
+    ".github/",
+]
+
+# Crate is published as `fastinfoset-rs`, but importers `use fastinfoset::…`.
+[lib]
+name = "fastinfoset"
+path = "src/lib.rs"
+
+[features]
+default = ["xml"]
+xml = ["dep:quick-xml"]
+
+[dependencies]
+thiserror = "2"
+quick-xml = { version = "0.37", optional = true }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+[[example]]
+name = "fi-dump"
+path = "examples/fi-dump.rs"
