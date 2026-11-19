@@ -93,7 +93,7 @@ pub fn xml_to_fi<R: Read, W: Write>(src: R, dst: W) -> Result<()> {
             QXmlIn::Eof => break,
             QXmlIn::Decl(_) => {} // ignored
             QXmlIn::Start(e) => {
-                let (name, attrs) = parse_start(&e, &reader)?;
+                let (name, attrs) = parse_start(&e)?;
                 writer.write_event(&Event::StartElement {
                     name,
                     namespaces: Vec::new(),
@@ -101,7 +101,7 @@ pub fn xml_to_fi<R: Read, W: Write>(src: R, dst: W) -> Result<()> {
                 })?;
             }
             QXmlIn::Empty(e) => {
-                let (name, attrs) = parse_start(&e, &reader)?;
+                let (name, attrs) = parse_start(&e)?;
                 writer.write_event(&Event::StartElement {
                     name,
                     namespaces: Vec::new(),
@@ -113,21 +113,25 @@ pub fn xml_to_fi<R: Read, W: Write>(src: R, dst: W) -> Result<()> {
                 writer.write_event(&Event::EndElement)?;
             }
             QXmlIn::Text(t) => {
-                let s = t
-                    .unescape()
-                    .map_err(|e| Error::Other(format!("text unescape: {e}")))?;
+                let s = t.xml10_content();
                 if !s.is_empty() {
                     writer.write_event(&Event::Characters(CharacterChunk::Text(
                         s.into_owned(),
                     )))?;
                 }
             }
+            // quick-xml 0.38+ hands `&amp;`, `&#10;` and the like as their own
+            // events; text between them is already literal.
+            QXmlIn::GeneralRef(r) => {
+                let s = resolve_ref(&r)?;
+                writer.write_event(&Event::Characters(CharacterChunk::Text(s)))?;
+            }
             QXmlIn::CData(c) => {
-                let bytes = c.into_inner();
-                let s = std::str::from_utf8(&bytes)
-                    .map_err(|e| Error::Other(format!("cdata utf8: {e}")))?;
+                let s = c.into_inner();
                 if !s.is_empty() {
-                    writer.write_event(&Event::Characters(CharacterChunk::Text(s.to_owned())))?;
+                    writer.write_event(&Event::Characters(CharacterChunk::Text(
+                        s.into_owned(),
+                    )))?;
                 }
             }
             QXmlIn::Comment(_) | QXmlIn::PI(_) | QXmlIn::DocType(_) => {
@@ -142,24 +146,30 @@ pub fn xml_to_fi<R: Read, W: Write>(src: R, dst: W) -> Result<()> {
     Ok(())
 }
 
-fn parse_start<R: std::io::BufRead>(
+/// A character reference or one of XML's five predefined entities, as text.
+fn resolve_ref(r: &quick_xml::events::BytesRef<'_>) -> Result<String> {
+    if let Some(c) = r
+        .resolve_char_ref()
+        .map_err(|e| Error::Other(format!("character reference: {e}")))?
+    {
+        return Ok(c.to_string());
+    }
+    quick_xml::escape::resolve_predefined_entity(r.as_ref())
+        .map(str::to_owned)
+        .ok_or_else(|| Error::Other(format!("unknown entity &{};", r.as_ref())))
+}
+
+fn parse_start(
     e: &quick_xml::events::BytesStart<'_>,
-    reader: &quick_xml::reader::Reader<R>,
 ) -> Result<(QualifiedName, Vec<crate::event::Attribute>)> {
-    let name_bytes = e.name();
-    let local = std::str::from_utf8(name_bytes.as_ref())
-        .map_err(|e| Error::Other(format!("element name utf8: {e}")))?
-        .to_owned();
-    let qname = QualifiedName::local(local);
+    let qname = QualifiedName::local(e.name().as_ref().to_owned());
 
     let mut attrs = Vec::new();
     for a in e.attributes() {
         let a = a.map_err(|e| Error::Other(format!("attribute parse: {e}")))?;
-        let n = std::str::from_utf8(a.key.as_ref())
-            .map_err(|e| Error::Other(format!("attr name utf8: {e}")))?
-            .to_owned();
+        let n = a.key.as_ref().to_owned();
         let v = a
-            .decode_and_unescape_value(reader.decoder())
+            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
             .map_err(|e| Error::Other(format!("attr decode: {e}")))?
             .into_owned();
         attrs.push(crate::event::Attribute {
